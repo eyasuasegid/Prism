@@ -75,7 +75,7 @@ ascii_to_hex() {
 
 bin_to_ascii() {
     local bin="$1"
-    # Ensure length is multiple of 8
+    # Pad to multiple of 8 ONLY if we're doing ASCII conversion (needs full bytes)
     local len=${#bin}
     if [ $((len % 8)) -ne 0 ]; then
         padding=$((8 - (len % 8)))
@@ -88,8 +88,20 @@ bin_to_ascii() {
     done
 }
 
+# NEW: Optimized ascii_to_bin that removes unnecessary leading zeros
 ascii_to_bin() {
-    echo -n "$1" | xxd -b | awk '{for(i=2;i<=NF;i++) printf "%s", $i}' | tr -d ' '
+    echo -n "$1" | while read -n 1 char; do
+        if [ -n "$char" ]; then
+            # Get decimal value
+            dec=$(printf "%d" "'$char")
+            # Convert to binary and remove leading zeros
+            bin=$(echo "obase=2; $dec" | bc 2>/dev/null)
+            # Remove leading zeros but keep at least one digit for zero
+            bin=$(echo "$bin" | sed 's/^0*//')
+            [ -z "$bin" ] && bin="0"
+            echo -n "$bin "
+        fi
+    done | sed 's/ $//'  # Remove trailing space
 }
 
 dec_to_ascii() {
@@ -116,46 +128,42 @@ ascii_to_oct() {
     done | sed 's/ $//'
 }
 
+# FIXED: bin_to_hex with dynamic padding
 bin_to_hex() {
     local bin="$1"
-    # Pad to multiple of 8
+    # Remove spaces
+    bin=$(echo "$bin" | tr -d ' ')
+    # Calculate how many bits we need to pad to make complete bytes
     local len=${#bin}
     if [ $((len % 8)) -ne 0 ]; then
         padding=$((8 - (len % 8)))
         bin=$(printf "%0${padding}d%s" 0 "$bin")
     fi
-    # Convert each 8-bit chunk to hex
+    # Convert each byte (8 bits) to hex
     for ((i=0; i<${#bin}; i+=8)); do
         byte="${bin:i:8}"
         printf "%02x" $((2#$byte))
     done
 }
 
+# FIXED: hex_to_bin - remove leading zeros
 hex_to_bin() {
     local hex="$1"
     if [ $(( ${#hex} % 2 )) -eq 1 ]; then
         hex="0$hex"
     fi
-    echo "$hex" | sed 's/./& /g' | tr ' ' '\n' | while read digit; do
-        case "$digit" in
-            0) echo -n "0000";;
-            1) echo -n "0001";;
-            2) echo -n "0010";;
-            3) echo -n "0011";;
-            4) echo -n "0100";;
-            5) echo -n "0101";;
-            6) echo -n "0110";;
-            7) echo -n "0111";;
-            8) echo -n "1000";;
-            9) echo -n "1001";;
-            a) echo -n "1010";;
-            b) echo -n "1011";;
-            c) echo -n "1100";;
-            d) echo -n "1101";;
-            e) echo -n "1110";;
-            f) echo -n "1111";;
-        esac
-    done
+    
+    # Convert each hex digit
+    for ((i=0; i<${#hex}; i+=2)); do
+        byte_hex="${hex:i:2}"
+        # Convert hex to decimal
+        dec=$((16#${byte_hex}))
+        # Convert decimal to binary and remove leading zeros
+        bin=$(echo "obase=2; $dec" | bc 2>/dev/null)
+        bin=$(echo "$bin" | sed 's/^0*//')
+        [ -z "$bin" ] && bin="0"
+        echo -n "$bin "
+    done | sed 's/ $//'
 }
 
 dec_to_hex() {
@@ -174,23 +182,46 @@ hex_to_dec() {
     done | sed 's/ $//'
 }
 
+# FIXED: dec_to_bin - remove leading zeros
 dec_to_bin() {
     for num in $1; do
-        printf "%08d " $(echo "obase=2; $num" | bc 2>/dev/null || echo "0")
+        # Convert to binary
+        bin=$(echo "obase=2; $num" | bc 2>/dev/null || echo "0")
+        # Remove leading zeros
+        bin=$(echo "$bin" | sed 's/^0*//')
+        [ -z "$bin" ] && bin="0"
+        printf "%s " "$bin"
     done | sed 's/ $//'
 }
 
+# FIXED: bin_to_dec with dynamic padding
 bin_to_dec() {
     local bin="$1"
-    # Pad to multiple of 8
+    # Remove spaces
+    bin=$(echo "$bin" | tr -d ' ')
+    # Pad to complete bytes if needed
     local len=${#bin}
     if [ $((len % 8)) -ne 0 ]; then
         padding=$((8 - (len % 8)))
         bin=$(printf "%0${padding}d%s" 0 "$bin")
     fi
+    # Convert each byte to decimal
     for ((i=0; i<${#bin}; i+=8)); do
         byte="${bin:i:8}"
         printf "%d " $((2#$byte))
+    done | sed 's/ $//'
+}
+
+# FIXED: oct_to_bin - remove leading zeros
+oct_to_bin() {
+    for num in $1; do
+        # Convert octal to decimal
+        dec=$((8#${num}))
+        # Convert decimal to binary and remove leading zeros
+        bin=$(echo "obase=2; $dec" | bc 2>/dev/null)
+        bin=$(echo "$bin" | sed 's/^0*//')
+        [ -z "$bin" ] && bin="0"
+        printf "%s " "$bin"
     done | sed 's/ $//'
 }
 
@@ -215,7 +246,7 @@ convert() {
         # ASCII Conversions
         ascii.ascii) echo "$input" ;;
         ascii.hex) ascii_to_hex "$input" ;;
-        ascii.bin) ascii_to_bin "$input" ;;
+        ascii.bin) ascii_to_bin "$input" ;;  # Now uses optimized version
         ascii.dec) ascii_to_dec "$input" ;;
         ascii.oct) ascii_to_oct "$input" ;;
         ascii.base64) echo -n "$input" | base64 ;;
@@ -225,7 +256,7 @@ convert() {
         # Hex Conversions
         hex.ascii) hex_to_ascii "$cleaned" ;;
         hex.hex) echo "$cleaned" ;;
-        hex.bin) hex_to_bin "$cleaned" ;;
+        hex.bin) hex_to_bin "$cleaned" ;;  # Now uses optimized version
         hex.dec) hex_to_dec "$cleaned" ;;
         hex.oct) 
             hex_to_dec "$cleaned" | while read num; do
@@ -256,7 +287,7 @@ convert() {
         # Decimal Conversions
         dec.ascii) dec_to_ascii "$cleaned" ;;
         dec.hex) dec_to_hex "$cleaned" ;;
-        dec.bin) dec_to_bin "$cleaned" ;;
+        dec.bin) dec_to_bin "$cleaned" ;;  # Now uses optimized version
         dec.dec) echo "$cleaned" ;;
         dec.oct)
             for num in $cleaned; do
@@ -274,11 +305,7 @@ convert() {
                 printf "%02x" "0$num"
             done
             ;;
-        oct.bin)
-            for num in $cleaned; do
-                printf "%08d " $(echo "obase=2; ibase=8; $num" | bc 2>/dev/null || echo "0")
-            done | sed 's/ $//'
-            ;;
+        oct.bin) oct_to_bin "$cleaned" ;;  # Now uses optimized version
         oct.dec)
             for num in $cleaned; do
                 printf "%d " "0$num"
@@ -289,13 +316,24 @@ convert() {
         # Base64 Conversions
         base64.ascii) echo "$cleaned" | base64 -d 2>/dev/null ;;
         base64.hex) echo "$cleaned" | base64 -d 2>/dev/null | xxd -p ;;
-        base64.bin) echo "$cleaned" | base64 -d 2>/dev/null | xxd -b | awk '{for(i=2;i<=NF;i++) printf "%s", $i}' | tr -d ' ' ;;
-        base64.dec) echo "$cleaned" | base64 -d 2>/dev/null | xxd -p | sed 's/../& /g' | while read hex; do [ -n "$hex" ] && printf "%d " "0x$hex"; done | sed 's/ $//' ;;
+        base64.bin) 
+            ascii=$(echo "$cleaned" | base64 -d 2>/dev/null)
+            ascii_to_bin "$ascii"
+            ;;
+        base64.dec) 
+            echo "$cleaned" | base64 -d 2>/dev/null | xxd -p | sed 's/../& /g' | while read hex; do 
+                [ -n "$hex" ] && printf "%d " "0x$hex"
+            done | sed 's/ $//' 
+            ;;
         base64.base64) echo "$cleaned" ;;
         
         # URL Conversions
         url.ascii) printf "%b" "$cleaned" ;;
         url.hex) printf "%b" "$cleaned" | xxd -p ;;
+        url.bin)
+            ascii=$(printf "%b" "$cleaned")
+            ascii_to_bin "$ascii"
+            ;;
         url.url) echo "$input" ;;
         
         # ROT13
@@ -315,7 +353,7 @@ convert() {
 # Show help
 show_help() {
     echo -e "${GREEN}============================================${NC}"
-    echo -e "${BLUE}Universal Converter for CTFs${NC}"
+    echo -e "${BLUE}Universal Converter${NC}"
     echo -e "${GREEN}============================================${NC}"
     echo ""
     echo -e "${CYAN}Usage:${NC}"
@@ -328,11 +366,15 @@ show_help() {
     echo ""
     echo -e "${CYAN}Examples:${NC}"
     echo "  $0 7069636f hex ascii"
-    echo "  $0 01110000 bin hex"
-    echo "  $0 112 105 99 dec hex"
+    echo "  $0 101010 bin hex"
+    echo "  $0 42 dec bin"
     echo "  $0 160 151 oct hex"
     echo "  $0 picoCTF ascii bin"
     echo "  $0 0x70 hex ascii"
+    echo ""
+    echo -e "${YELLOW}Note: Binary output shows minimal representation (no unnecessary leading zeros)${NC}"
+    echo "  Example: 42 (decimal) → 101010 (not 00101010)"
+    echo "  Example: 1 (decimal) → 1 (not 00000001)"
     echo ""
 }
 
