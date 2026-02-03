@@ -1,5 +1,5 @@
 #!/bin/bash
-# PRISM - Complete Universal Converter & CTF Toolkit
+# PRISM - Complete Universal Converter 
 
 # Colors
 RED='\033[0;31m'
